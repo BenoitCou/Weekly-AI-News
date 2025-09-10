@@ -2,7 +2,7 @@ name: AI Weekly Press Review
 
 on:
   schedule:
-    - cron: '22 23 * * 3'   
+    - cron: '40 23 * * 3'   
   workflow_dispatch:
 
 jobs:
