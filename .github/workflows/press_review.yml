@@ -24,5 +24,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_DM_ID: ${{ secrets.SLACK_DM_ID }}
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+          MAIN_CHANNEL_ID: ${{ secrets.MAIN_CHANNEL_ID }}
+          REVIEW_CHANNEL_ID: ${{ secrets.REVIEW_CHANNEL_ID }}
         run: python main.py
