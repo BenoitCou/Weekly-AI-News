@@ -293,12 +293,12 @@ def handle_regenerate_newsletter(ack, body, client):
 def wait_for_send_button():
     global newsletter_sent
     print("Waiting for Send button to be pressed ...")
-    print("⏰ 2 hours countdown started...")
+    print("⏰ 3 hours countdown started...")
     
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
     
-    timeout_seconds = 2 * 60 * 60
+    timeout_seconds = 3 * 60 * 60
     start_time = time.time()
     
     try:
@@ -324,9 +324,7 @@ def wait_for_send_button():
         handler.stop()
 
 if __name__ == "__main__":
-    
-    global current_newsletter
-    
+        
     for attempts in range(3):
         try:
             resp = generate_press_review()
