@@ -234,16 +234,110 @@ def add_slack_sources(text: str, mapping: dict) -> str:
             text = text.replace(sentence, replaced)
     return text
 
+newsletter_sent = False
+current_newsletter = None
+
+@app.action("send_newsletter")
+def handle_send_newsletter(ack, body, client):
+    global newsletter_sent
+    ack()
+    newsletter_sent = True
+    print("Newsletter sent to main channel!")
+    
+    # Envoyer au canal principal
+    if current_newsletter:
+        send_to_main_channel(current_newsletter)
+    
+    # Mettre à jour le message pour confirmer l'envoi
+    client.chat_update(
+        channel=body["channel"]["id"],
+        ts=body["message"]["ts"],
+        text="✅ Newsletter sent to main channel!",
+        blocks=[{
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "✅ *Newsletter sent to main channel!*"}
+        }]
+    )
+
+@app.action("regenerate_newsletter")
+def handle_regenerate_newsletter(ack, body, client):
+    """Gestionnaire pour le bouton Regenerate"""
+    global newsletter_sent, current_newsletter
+    ack()
+    newsletter_sent = False
+    print("Regeneration of the content...")
+    
+    client.chat_update(
+        channel=body["channel"]["id"],
+        ts=body["message"]["ts"],
+        text="🔄 Regeneration ongoing...",
+        blocks=[{
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "🔄 *Regeneration ongoing...*"}
+        }]
+    )
+    
+    try:
+        resp = generate_press_review()
+        text_body = resp.candidates[0].content.parts[0].text
+        dico = create_dico(resp)
+        current_newsletter = add_slack_sources(text_body, dico)
+        send_to_review_channel(current_newsletter)
+    except Exception as e:
+        print(f"Erreur: {e}")
+        client.chat_postMessage(
+            channel=body["channel"]["id"],
+            text=f"Error: {e}"
+        )
+
+def wait_for_send_button():
+    global newsletter_sent
+    print("Waiting for Send button to be pressed ...")
+    print("⏰ 2 hours countdown started...")
+    
+    handler = SocketModeHandler(app, SLACK_APP_TOKEN)
+    handler.start()
+    
+    timeout_seconds = 2 * 60 * 60
+    start_time = time.time()
+    
+    try:
+        while not newsletter_sent:
+            elapsed_time = time.time() - start_time
+            remaining_time = timeout_seconds - elapsed_time
+            
+            if remaining_time <= 0:
+                print("⏰ TIMEOUT: Program stopped after 2 hours")
+                sys.exit(0)
+            
+            if int(elapsed_time) % 300 == 0:  
+                hours_left = int(remaining_time // 3600)
+                minutes_left = int((remaining_time % 3600) // 60)
+                print(f"⏰ Time remaining: {hours_left}h {minutes_left}m")
+            
+            time.sleep(1)
+            
+        print("Newsletter approved and sent")
+    except KeyboardInterrupt:
+        print("Stopping...")
+    finally:
+        handler.stop()
+
 if __name__ == "__main__":
     
-    for attenpts in range (3):
+    global current_newsletter
+    
+    for attempts in range(3):
         try:
             resp = generate_press_review()
             text_body = resp.candidates[0].content.parts[0].text
             dico = create_dico(resp)
-            newsletter_with_sources = add_slack_sources(text_body, dico)
+            current_newsletter = add_slack_sources(text_body, dico)
             print("Press review generated.\n")
-            send_to_review_channel(newsletter_with_sources)
+            send_to_review_channel(current_newsletter)
             break
+
         except Exception as e:
             print(f"Startup generation failed: {e}")
+    
+    wait_for_send_button()
