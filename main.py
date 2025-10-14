@@ -40,7 +40,6 @@ current_newsletter = None
 handler = None                 
 handler_thread = None          
 stop_event = threading.Event() 
-# =====================================
 
 
 def send_to_main_channel(message: str):
