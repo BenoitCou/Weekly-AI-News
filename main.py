@@ -3,14 +3,11 @@ import json
 import time
 import sys
 import re
-import requests
-from slack_sdk.errors import SlackApiError
-from dotenv import load_dotenv
+import threading
 from datetime import datetime, timezone, timedelta
-from typing import List, Tuple
+from typing import List
 
 from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
@@ -38,6 +35,12 @@ app = App(token=SLACK_BOT_TOKEN)
 client = genai.Client(api_key=GEMINI_API_KEY)
 GROUNDING_TOOL = types.Tool(google_search=types.GoogleSearch())
 
+newsletter_sent = False
+current_newsletter = None
+handler = None                 
+handler_thread = None          
+stop_event = threading.Event() 
+# =====================================
 
 
 def send_to_main_channel(message: str):
@@ -70,11 +73,13 @@ def send_to_main_channel(message: str):
     response = slack_client.chat_postMessage(
         channel=MAIN_CHANNEL_ID,
         blocks=blocks,
+        text="AI Weekly Newsletter",
         unfurl_links=False,
         unfurl_media=False
     )
     print(f"Newsletter sent to main channel: {response['ts']}")
     return response['ts']
+
 
 def send_to_review_channel(message: str):
     """
@@ -132,11 +137,13 @@ def send_to_review_channel(message: str):
     response = slack_client.chat_postMessage(
         channel=REVIEW_CHANNEL_ID,
         blocks=blocks,
+        text="Newsletter Review - Please choose an action",
         unfurl_links=False,
         unfurl_media=False
     )
     print(f"Review message sent to channel: {response['ts']}")
     return response['ts']
+
 
 def generate_press_review():
     """
@@ -204,6 +211,7 @@ def generate_press_review():
     )
     return response
 
+
 def create_dico(resp) -> dict:
     """
     Build {segment_text: [urls...]} dict from Gemini grounding metadata.
@@ -222,6 +230,7 @@ def create_dico(resp) -> dict:
                 dico[seg_text].append(url)
     return dico
 
+
 def add_slack_sources(text: str, mapping: dict) -> str:
     """
     For each supported segment sentence, append Slack-formatted [source] links.
@@ -234,39 +243,46 @@ def add_slack_sources(text: str, mapping: dict) -> str:
             text = text.replace(sentence, replaced)
     return text
 
-newsletter_sent = False
-current_newsletter = None
 
 @app.action("send_newsletter")
 def handle_send_newsletter(ack, body, client):
-    global newsletter_sent
-    ack()
-    newsletter_sent = True
-    print("Newsletter sent to main channel!")
-    
-    # Envoyer au canal principal
-    if current_newsletter:
-        send_to_main_channel(current_newsletter)
-    
-    # Mettre à jour le message pour confirmer l'envoi
-    client.chat_update(
-        channel=body["channel"]["id"],
-        ts=body["message"]["ts"],
-        text="✅ Newsletter sent to main channel!",
-        blocks=[{
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "✅ *Newsletter sent to main channel!*"}
-        }]
-    )
+     """
+        Handle the 'Send' button action for the newsletter.
+     """ 
+     global newsletter_sent, handler
+     ack()
+     
+     if newsletter_sent:
+         return
+     
+     newsletter_sent = True
+     stop_event.set()
+     print("Newsletter sent to main channel!")
+
+     if current_newsletter:
+         send_to_main_channel(current_newsletter)
+
+     client.chat_update(
+         channel=body["channel"]["id"],
+         ts=body["message"]["ts"],
+         text="✅ Newsletter sent to main channel!",
+         blocks=[{
+             "type": "section",
+             "text": {"type": "mrkdwn", "text": "✅ *Newsletter sent to main channel!*"}
+         }]
+     )
 
 @app.action("regenerate_newsletter")
 def handle_regenerate_newsletter(ack, body, client):
-    """Gestionnaire pour le bouton Regenerate"""
+    """    
+    Handle the 'Regenerate' button action for the newsletter.
+    """
+
     global newsletter_sent, current_newsletter
     ack()
     newsletter_sent = False
     print("Regeneration of the content...")
-    
+
     client.chat_update(
         channel=body["channel"]["id"],
         ts=body["message"]["ts"],
@@ -276,7 +292,7 @@ def handle_regenerate_newsletter(ack, body, client):
             "text": {"type": "mrkdwn", "text": "🔄 *Regeneration ongoing...*"}
         }]
     )
-    
+
     try:
         resp = generate_press_review()
         text_body = resp.candidates[0].content.parts[0].text
@@ -290,41 +306,87 @@ def handle_regenerate_newsletter(ack, body, client):
             text=f"Error: {e}"
         )
 
-def wait_for_send_button():
-    global newsletter_sent
-    print("Waiting for Send button to be pressed ...")
-    print("⏰ 3 hours countdown started...")
+
+def start_socket_handler_in_thread():
+    """
+    Start the Slack Socket Mode handler in a separate daemon thread.
+    """
+    global handler, handler_thread
     
+    if handler is not None:
+        return handler, handler_thread
+        
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
-    handler.start()
+
+    def _run():
+        try:
+            handler.start()  # bloquant, mais dans un thread
+        except Exception as e:
+            print(f"[Socket thread] stopped with error: {e}")
+
+    handler_thread = threading.Thread(target=_run, name="socket-mode-thread", daemon=True)
+    handler_thread.start()
+    return handler, handler_thread
+
+
+def stop_socket_handler():
+    """
+    Stop the Slack Socket Mode handler and clean up resources.
+    """
+    global handler, handler_thread
+    if handler is not None:
+        try:
+            handler.close()
+            handler = None  
+        except Exception as e:
+            print(f"handler.close() failed: {e}")
+    if handler_thread is not None:
+        handler_thread.join(timeout=10)
+        handler_thread = None  
+
+
+def wait_for_send_button():
+    """
+    Wait for the 'Send' button to be pressed with timeout and logging.
+    """
     
-    timeout_seconds = 3 * 60 * 60
+    print("Waiting for Send button to be pressed ...")
+    start_socket_handler_in_thread()
+
+    TIMEOUT_SECONDS = 2 * 60 * 60
     start_time = time.time()
-    
+    next_log_at = 0
+
     try:
-        while not newsletter_sent:
-            elapsed_time = time.time() - start_time
-            remaining_time = timeout_seconds - elapsed_time
-            
-            if remaining_time <= 0:
-                print("⏰ TIMEOUT: Program stopped after 2 hours")
-                sys.exit(0)
-            
-            if int(elapsed_time) % 300 == 0:  
-                hours_left = int(remaining_time // 3600)
-                minutes_left = int((remaining_time % 3600) // 60)
-                print(f"⏰ Time remaining: {hours_left}h {minutes_left}m")
-            
-            time.sleep(1)
-            
-        print("Newsletter approved and sent")
+        while True:
+            if stop_event.is_set(): 
+                print("✅ 'Send' pressed -> stopping handler.")
+                break
+
+            elapsed = time.time() - start_time
+            remaining = TIMEOUT_SECONDS - elapsed
+
+            if remaining <= 0:
+                print("⏰ TIMEOUT: Program stopped after 2 hours.")
+                stop_event.set()
+                break
+
+            if elapsed >= next_log_at:
+                hrs = int(remaining // 3600)
+                mins = int((remaining % 3600) // 60)
+                print(f"⏰ Time remaining: {hrs}h {mins}m")
+                next_log_at = elapsed + 300  
+
+            stop_event.wait(timeout=1.0)
+
     except KeyboardInterrupt:
-        print("Stopping...")
+        print("Stopping by KeyboardInterrupt...")
     finally:
-        handler.stop()
+        stop_socket_handler()
+        print("Socket handler stopped. Bye!")
+
 
 if __name__ == "__main__":
-        
     for attempts in range(3):
         try:
             resp = generate_press_review()
@@ -334,8 +396,9 @@ if __name__ == "__main__":
             print("Press review generated.\n")
             send_to_review_channel(current_newsletter)
             break
-
         except Exception as e:
             print(f"Startup generation failed: {e}")
-    
+
     wait_for_send_button()
+
+    print("Exiting now.")
