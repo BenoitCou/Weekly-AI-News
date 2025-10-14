@@ -98,6 +98,8 @@ GEMINI_API_KEY=your_gemini_api_key
 ## Running the code
 
 ```bash
+git clone https://github.com/BenoitCou/Weekly-AI-News
+cd Weekly-AI-News
 pip install -r requirements.txt
 python main.py
 ```
@@ -113,7 +115,7 @@ What happens:
 
 ---
 
-## 📝 Content rules (enforced by the prompt)
+## Content rules (enforced by the prompt)
 
 - Title format:
   ```
@@ -132,7 +134,7 @@ The script post-processes Gemini’s grounded segments to append Slack `[source]
 
 ---
 
-## ⚙️ Configuration & customization
+## Configuration & customization
 
 - **Date window**: by default, news must be **after `today-7 days`**.
 
