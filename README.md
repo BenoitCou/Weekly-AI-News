@@ -1,6 +1,6 @@
 # AI Weekly Slack Newsletter (Gemini + Socket Mode)
 
-A small Python app that generates a **weekly AI press review** with **Google Gemini** (grounded by Google Search) and posts it to Slack for **human-in-the-loop review**. Reviewers see the draft in a dedicated channel with **“Send”** and **“Regenerate”** buttons. On approval, the newsletter is posted to your main channel.
+A Python app that generates a **weekly AI press review** with **Google Gemini** (grounded by Google Search) and posts it to Slack for **human-in-the-loop review**. Reviewers see the draft in a dedicated channel with **“Send”** and **“Regenerate”** buttons. On approval, the newsletter is posted to your main channel.
 
 ---
 
